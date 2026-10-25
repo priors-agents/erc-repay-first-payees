@@ -149,6 +149,80 @@ contract FullRepaymentCreditor is IRepayFirstCreditor {
     }
 }
 
+/// @notice An ERC-8183 job contract reduced to what the tests need: no hooks, fees or expiry (a non-hooked kernel, which
+///         ERC-8183 allows). The client or the provider proposes the budget, the client funds it, only the provider
+///         submits, only the evaluator completes, and completion pays the escrow to the provider. A job's provider is
+///         set at creation and never changes.
+contract MockAgenticCommerce {
+    enum Status {
+        Open,
+        Funded,
+        Submitted,
+        Completed
+    }
+
+    struct Job {
+        address client;
+        address provider;
+        address evaluator;
+        uint256 budget;
+        Status status;
+    }
+
+    MockToken public immutable paymentToken;
+    mapping(uint256 => Job) public jobs;
+    uint256 public jobCounter;
+
+    event JobSubmitted(uint256 indexed jobId, address indexed provider, bytes32 deliverable);
+    event PaymentReleased(uint256 indexed jobId, address indexed provider, uint256 amount);
+
+    constructor(MockToken paymentToken_) {
+        paymentToken = paymentToken_;
+    }
+
+    function createJob(address provider, address evaluator) external returns (uint256 jobId) {
+        jobId = ++jobCounter;
+        jobs[jobId] = Job(msg.sender, provider, evaluator, 0, Status.Open);
+    }
+
+    function setBudget(uint256 jobId, uint256 amount, bytes calldata) external {
+        Job storage job = jobs[jobId];
+        require(job.status == Status.Open, "wrong status");
+        require(msg.sender == job.client || msg.sender == job.provider, "unauthorized");
+        job.budget = amount;
+    }
+
+    function fund(uint256 jobId, uint256 expectedBudget, bytes calldata) external {
+        Job storage job = jobs[jobId];
+        require(job.status == Status.Open, "wrong status");
+        require(msg.sender == job.client, "unauthorized");
+        require(job.budget != 0 && job.budget == expectedBudget, "budget");
+        job.status = Status.Funded;
+        require(paymentToken.transferFrom(msg.sender, address(this), job.budget), "pull failed");
+    }
+
+    function submit(uint256 jobId, bytes32 deliverable, bytes calldata) external {
+        Job storage job = jobs[jobId];
+        require(job.status == Status.Funded, "wrong status");
+        require(msg.sender == job.provider, "unauthorized");
+        job.status = Status.Submitted;
+        emit JobSubmitted(jobId, msg.sender, deliverable);
+    }
+
+    function complete(uint256 jobId, bytes32, bytes calldata) external {
+        Job storage job = jobs[jobId];
+        require(job.status == Status.Submitted, "wrong status");
+        require(msg.sender == job.evaluator, "unauthorized");
+        job.status = Status.Completed;
+        require(paymentToken.transfer(job.provider, job.budget), "pay failed");
+        emit PaymentReleased(jobId, job.provider, job.budget);
+    }
+
+    function statusOf(uint256 jobId) external view returns (Status) {
+        return jobs[jobId].status;
+    }
+}
+
 /// @notice A creditor whose every call reverts.
 contract RevertingCreditor is IRepayFirstCreditor {
     function amountOwed(uint256, address) external pure returns (uint256) {

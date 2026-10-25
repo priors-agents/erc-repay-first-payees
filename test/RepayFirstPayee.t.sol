@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {IRepayFirstPayee} from "../src/IRepayFirstPayee.sol";
+import {IRepayFirstProvider} from "../src/IRepayFirstProvider.sol";
 import {RepayFirstPayee, RepayFirstPayeeFactory} from "../src/RepayFirstPayee.sol";
 import {
     MockRegistry,
@@ -12,7 +13,8 @@ import {
     GreedyCreditor,
     GasBurningCreditor,
     FullRepaymentLender,
-    FullRepaymentCreditor
+    FullRepaymentCreditor,
+    MockAgenticCommerce
 } from "./mocks/Mocks.sol";
 
 contract RepayFirstPayeeTest is Test {
@@ -30,6 +32,8 @@ contract RepayFirstPayeeTest is Test {
     address owner = makeAddr("owner");
     address buyer = makeAddr("buyer");
     address stranger = makeAddr("stranger");
+    address client = makeAddr("client");
+    address evaluator = makeAddr("evaluator");
 
     function setUp() public {
         registry = new MockRegistry();
@@ -80,6 +84,7 @@ contract RepayFirstPayeeTest is Test {
         assertEq(payee.beneficiary(), owner);
         assertEq(payee.creditors().length, 0);
         assertTrue(payee.supportsInterface(type(IRepayFirstPayee).interfaceId));
+        assertTrue(payee.supportsInterface(type(IRepayFirstProvider).interfaceId));
         assertTrue(payee.supportsInterface(0x01ffc9a7));
         assertFalse(payee.supportsInterface(0xffffffff));
     }
@@ -491,6 +496,115 @@ contract RepayFirstPayeeTest is Test {
         vm.prank(buyer);
         vm.expectRevert(RepayFirstPayee.CreditorHasClaim.selector);
         payee.removeCreditor(address(lenderA));
+    }
+
+    // ------------------------------------------------------------- ERC-8183 provider
+
+    /// @dev A job whose provider is the payee, funded with `budget` once the provider has proposed it through the payee.
+    function _fundedJob(MockAgenticCommerce commerce, address actor, uint256 budget) internal returns (uint256 jobId) {
+        vm.prank(client);
+        jobId = commerce.createJob(address(payee), evaluator);
+        vm.prank(actor);
+        payee.setJobBudget(address(commerce), jobId, budget, "");
+        usd.mint(client, budget);
+        vm.startPrank(client);
+        usd.approve(address(commerce), budget);
+        commerce.fund(jobId, budget, "");
+        vm.stopPrank();
+    }
+
+    /// @dev Revinand's case on Ethereum Magicians: ERC-8183 takes the submission only from the provider, so a job whose
+    ///      provider was the payee could not reach Submitted. Create, fund, submit, complete, then sweep.
+    function test_provider_aJobWithThePayeeAsProvider_isSubmittedAndPaid_andTheSweepRepaysFirst() public {
+        MockAgenticCommerce commerce = new MockAgenticCommerce(usd);
+        _add(address(lenderA), 10_000);
+        lenderA.setOwed(AGENT, 30e6);
+        uint256 jobId = _fundedJob(commerce, owner, 50e6);
+        assertEq(uint256(commerce.statusOf(jobId)), uint256(MockAgenticCommerce.Status.Funded));
+
+        vm.prank(owner); // the owner's own wallet is not the job's provider
+        vm.expectRevert(bytes("unauthorized"));
+        commerce.submit(jobId, keccak256("work"), "");
+
+        vm.prank(owner);
+        payee.submitJob(address(commerce), jobId, keccak256("work"), "");
+        assertEq(uint256(commerce.statusOf(jobId)), uint256(MockAgenticCommerce.Status.Submitted));
+
+        vm.prank(evaluator);
+        commerce.complete(jobId, bytes32(0), "");
+        assertEq(usd.balanceOf(address(payee)), 50e6); // the job pays its provider: the payee
+
+        vm.prank(stranger);
+        (uint256 toCreditors, uint256 forwarded) = payee.sweep(address(usd));
+        assertEq(toCreditors, 30e6);
+        assertEq(forwarded, 20e6);
+        assertEq(usd.balanceOf(address(lenderA)), 30e6);
+        assertEq(usd.balanceOf(owner), 20e6);
+    }
+
+    function test_provider_theOperatorActsForTheOwner_untilTheIdentityIsSold() public {
+        MockAgenticCommerce commerce = new MockAgenticCommerce(usd);
+        address agentKey = makeAddr("agentKey");
+        vm.prank(owner);
+        payee.setOperator(agentKey);
+        assertEq(payee.operator(), agentKey);
+
+        uint256 jobId = _fundedJob(commerce, agentKey, 10e6);
+        vm.prank(agentKey);
+        payee.submitJob(address(commerce), jobId, keccak256("work"), "");
+        assertEq(uint256(commerce.statusOf(jobId)), uint256(MockAgenticCommerce.Status.Submitted));
+
+        vm.prank(owner);
+        registry.transfer(AGENT, buyer);
+        assertEq(payee.operator(), address(0)); // the seller's operator lapses with the sale
+        vm.prank(client);
+        uint256 next = commerce.createJob(address(payee), evaluator);
+        vm.prank(agentKey);
+        vm.expectRevert(RepayFirstPayee.NotOperator.selector);
+        payee.setJobBudget(address(commerce), next, 10e6, "");
+        vm.prank(buyer);
+        payee.setJobBudget(address(commerce), next, 10e6, "");
+    }
+
+    function test_provider_onlyTheOwnerOrTheOperator() public {
+        MockAgenticCommerce commerce = new MockAgenticCommerce(usd);
+        uint256 jobId = _fundedJob(commerce, owner, 10e6);
+        vm.startPrank(stranger);
+        vm.expectRevert(RepayFirstPayee.NotOperator.selector);
+        payee.setJobBudget(address(commerce), jobId, 1, "");
+        vm.expectRevert(RepayFirstPayee.NotOperator.selector);
+        payee.submitJob(address(commerce), jobId, keccak256("work"), "");
+        vm.expectRevert(RepayFirstPayee.NotOwner.selector);
+        payee.setOperator(stranger);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        registry.burn(AGENT); // no owner to read: nobody acts for the agent
+        vm.prank(owner);
+        vm.expectRevert(RepayFirstPayee.NotOperator.selector);
+        payee.submitJob(address(commerce), jobId, keccak256("work"), "");
+    }
+
+    /// @dev The two calls are the only ones the payee makes for its owner, so naming a token, or an address with no
+    ///      code, as `commerce` moves nothing: a token has neither function.
+    function test_provider_theCallsCannotMoveThePayeesBalance() public {
+        _add(address(lenderA), 10_000);
+        lenderA.setOwed(AGENT, 30e6);
+        _pay(100e6);
+        vm.startPrank(owner);
+        vm.expectRevert();
+        payee.submitJob(address(usd), 1, bytes32(uint256(uint160(owner))), "");
+        vm.expectRevert();
+        payee.setJobBudget(address(usd), uint256(uint160(owner)), 100e6, "");
+        vm.expectRevert();
+        payee.submitJob(stranger, 1, bytes32(0), "");
+        vm.stopPrank();
+        assertEq(usd.balanceOf(address(payee)), 100e6);
+        assertEq(usd.balanceOf(owner), 0);
+
+        (uint256 toCreditors, uint256 forwarded) = payee.sweep(address(usd));
+        assertEq(toCreditors, 30e6);
+        assertEq(forwarded, 70e6);
     }
 
     function test_maxCreditors() public {

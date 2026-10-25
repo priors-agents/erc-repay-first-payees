@@ -2,6 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {IRepayFirstPayee, IRepayFirstCreditor} from "./IRepayFirstPayee.sol";
+import {IRepayFirstProvider} from "./IRepayFirstProvider.sol";
+
+/// @dev The two ERC-8183 functions that accept only a job's provider, in the form of ERC-8183's reference.
+interface IERC8183Provider {
+    function setBudget(uint256 jobId, uint256 amount, bytes calldata optParams) external;
+    function submit(uint256 jobId, bytes32 deliverable, bytes calldata optParams) external;
+}
 
 interface IERC20Approve {
     function balanceOf(address account) external view returns (uint256);
@@ -22,9 +29,10 @@ interface IERC165 {
 ///         address by `RepayFirstPayeeFactory`. Each creditor is called with a fixed gas budget, so one that fails or
 ///         burns gas is skipped and the rest of the sweep goes on. What a creditor is offered and does not take stays
 ///         here in its reserve, up to what it is owed, and is offered again at each sweep: a lender that takes only
-///         full repayment is repaid once its reserve covers what is due.
+///         full repayment is repaid once its reserve covers what is due. As an ERC-8183 job's provider it proposes
+///         the budget and submits the work for the owner or its operator, and makes no other call for them.
 /// @dev Not audited. A reference for the interface, not a contract to hold real revenue.
-contract RepayFirstPayee is IRepayFirstPayee, IERC165 {
+contract RepayFirstPayee is IRepayFirstPayee, IRepayFirstProvider, IERC165 {
     uint256 public constant MAX_CREDITORS = 8;
     uint16 public constant BPS = 10_000;
     /// @notice Gas given to a creditor's `amountOwed` and `hasClaim`, and to its `collect`.
@@ -43,9 +51,12 @@ contract RepayFirstPayee is IRepayFirstPayee, IERC165 {
     mapping(address => uint256) private _place;
     uint256 private _places;
     mapping(uint256 => mapping(address => uint256)) private _reserve; // place => token => amount
+    address private _operator;
+    address private _operatorSetBy; // as for the beneficiary: the operator acts only while this owner owns
     bool private _locked;
 
     error NotOwner();
+    error NotOperator();
     error BadCreditor();
     error BadShare();
     error TooManyCreditors();
@@ -106,8 +117,19 @@ contract RepayFirstPayee is IRepayFirstPayee, IERC165 {
         return place == 0 ? 0 : _reserve[place][token];
     }
 
+    /// @dev Like a beneficiary, an operator counts only while the owner that named it holds the identity; with no owner
+    ///      to read, there is none.
+    function operator() public view returns (address) {
+        try _registry.ownerOf(_agentId) returns (address owner) {
+            return owner == _operatorSetBy ? _operator : address(0);
+        } catch {
+            return address(0);
+        }
+    }
+
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IRepayFirstPayee).interfaceId || interfaceId == type(IERC165).interfaceId;
+        return interfaceId == type(IRepayFirstPayee).interfaceId || interfaceId == type(IRepayFirstProvider).interfaceId
+            || interfaceId == type(IERC165).interfaceId;
     }
 
     // ---------------------------------------------------------------- configuration
@@ -147,6 +169,34 @@ contract RepayFirstPayee is IRepayFirstPayee, IERC165 {
         _beneficiary = beneficiary_;
         _beneficiarySetBy = msg.sender; // onlyOwner: the current owner
         emit BeneficiarySet(beneficiary_);
+    }
+
+    // ---------------------------------------------------------------- ERC-8183 provider
+
+    function setOperator(address operator_) external lock onlyOwner {
+        _operator = operator_;
+        _operatorSetBy = msg.sender; // onlyOwner: the current owner
+        emit OperatorSet(operator_);
+    }
+
+    /// @dev Only these two calls, to whatever `commerce` the caller names: they move nothing out of the payee (a token
+    ///      has neither function, and outside a sweep the payee holds no approval). What the job pays on completion is a
+    ///      plain transfer to the payee, swept like any other revenue.
+    function setJobBudget(address commerce, uint256 jobId, uint256 amount, bytes calldata optParams) external lock {
+        _onlyOwnerOrOperator();
+        IERC8183Provider(commerce).setBudget(jobId, amount, optParams);
+    }
+
+    function submitJob(address commerce, uint256 jobId, bytes32 deliverable, bytes calldata optParams) external lock {
+        _onlyOwnerOrOperator();
+        IERC8183Provider(commerce).submit(jobId, deliverable, optParams);
+    }
+
+    function _onlyOwnerOrOperator() private view {
+        try _registry.ownerOf(_agentId) returns (address owner) {
+            if (msg.sender == owner || (msg.sender == _operator && owner == _operatorSetBy)) return;
+        } catch {}
+        revert NotOperator();
     }
 
     // ---------------------------------------------------------------- sweep
