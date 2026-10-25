@@ -1,11 +1,13 @@
 # Agent Repay-First Payees (draft ERC)
 
 A revenue address for an agent identity that pays its creditors before its owner. The agent uses the payee as the
-address where it is paid (an x402 `payTo`, an ERC-8183 job's provider, an ERC-8004 payment wallet). When anyone sweeps
-it, each creditor gets what it is owed, most senior first and up to its agreed share of the sweep, and the rest goes to
-the agent's owner. What a creditor cannot take yet stays in the payee in reserve for it, so a lender that takes
-repayment only in full is repaid once the reserve covers what is due. The owner cannot drop a creditor that is still
-owed, which is what makes the revenue worth lending against.
+address where it is paid (an x402 `payTo`, an ERC-8183 job's provider). It cannot be set as the agent's ERC-8004
+payment wallet (`agentWallet`) as ERC-8004 is specified: the registry takes the new wallet's signature, and the payee
+validates none (the draft's Rationale says why, and asks whether a narrow way to allow it is worth specifying). When
+anyone sweeps it, each creditor gets what it is owed, most senior first and up to its agreed share of the sweep, and
+the rest goes to the agent's owner. What a creditor cannot take yet stays in the payee in reserve for it, so a lender
+that takes repayment only in full is repaid once the reserve covers what is due. The owner cannot drop a creditor that
+is still owed, which is what makes the revenue worth lending against.
 
 An optional section, "Paying holders after creditors", lets an agent pay the holders of an ERC-7254 revenue-sharing
 token from what its creditors leave: the token is the payee's beneficiary, never a creditor, and books what a sweep

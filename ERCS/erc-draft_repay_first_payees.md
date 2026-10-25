@@ -31,7 +31,9 @@ Lending to an agent against what it earns is safest when repayment comes from th
 or its owner can spend them. Agent revenue already arrives at addresses the agent names: a pay-to address for HTTP
 payments signed with [ERC-3009](./eip-3009.md) transfers, the provider address of an ERC-8183 job, the
 payment wallet of an [ERC-8004](./eip-8004.md) identity. None of these says anything about what happens to the money
-once it arrives.
+once it arrives. A payee can be the first two: a pay-to address, and a job's provider. It cannot be set as an ERC-8004
+payment wallet as that proposal is specified, since ERC-8004 sets `agentWallet` only with the new wallet's signature
+and a payee validates none (Rationale).
 
 Lenders that route revenue through a contract of their own today can only trust their own contract, and nobody else can
 tell that the address is encumbered. A common payee interface lets several lenders share one revenue address with a
@@ -242,6 +244,13 @@ agent's revenue.
   implementation does.
 - **An operator that lapses with its owner.** The key that does the agent's work can submit it without holding the
   identity. Like a beneficiary, it stops acting for the agent once the owner that named it no longer holds the identity.
+- **A pay-to address, not an ERC-8004 payment wallet.** ERC-8004's `setAgentWallet` takes the new wallet's signature:
+  [EIP-712](./eip-712.md) for an account without code, [ERC-1271](./eip-1271.md) for a contract. A payee validates no
+  signature, so it cannot be set as `agentWallet`. Accepting the owner's signatures would be the wrong way to allow it:
+  Permit2 and some tokens accept ERC-1271 signatures for transfers, so the owner could sign the payee's balance away
+  outside a sweep. A payee that validates only an `agentWallet` digest it computes itself would avoid that, but ERC-8004
+  leaves the typed data of that digest to each registry; whether such a part is worth specifying, or a pay-to address is
+  enough, is left open.
 - **Holders as the beneficiary.** With seniority by order of addition, a token added as a creditor would rank ahead of
   every lender added after it, the opposite of holders last. As the beneficiary, the token receives only what every
   creditor, present or future, left. A splitter that pays fixed tranches in order before a residual recipient gives the
@@ -341,8 +350,9 @@ counts the remainder below one unit of a claim as withdrawn, it keeps that remai
 ## Security Considerations
 
 - **The revenue address can be changed.** Payers pay whatever address the agent advertises. An owner can advertise a
-  new address and route future revenue around the payee. Creditors SHOULD check, where the address is on chain (such as
-  an ERC-8004 payment wallet), that it still points to the payee before each draw, and price the rest as unsecured.
+  new address and route future revenue around the payee. Creditors SHOULD check, where the agent publishes the address
+  on chain, that it still points to the payee before each draw, and price the rest as unsecured. A payee cannot be the
+  agent's ERC-8004 payment wallet (Rationale), so what payers send to `agentWallet` does not reach it.
 - **Creditors are trusted with their own figures.** A creditor reports its own `amountOwed`. A creditor the owner added
   can over-report and take up to its share of every sweep, or leave it in its reserve, out of the owner's reach until
   the creditor reports less or leaves. Owners SHOULD add only lenders they borrowed from.

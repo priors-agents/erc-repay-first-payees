@@ -2,8 +2,9 @@
 pragma solidity ^0.8.20;
 
 /// @title Agent Repay-First Payees (draft ERC)
-/// @notice An address an agent uses to receive its revenue (an x402 `payTo`, an ERC-8183 provider, an ERC-8004
-///         `agentWallet`) that pays what its registered creditors are owed before forwarding the rest to the agent.
+/// @notice An address an agent uses to receive its revenue (an x402 `payTo`, an ERC-8183 provider) that pays what its
+///         registered creditors are owed before forwarding the rest to the agent. It validates no signature, so it
+///         cannot be set as an ERC-8004 `agentWallet`.
 /// @dev The ERC-165 identifier is `type(IRepayFirstPayee).interfaceId`.
 interface IRepayFirstPayee {
     event CreditorAdded(address indexed creditor, uint16 maxShareBps);
