@@ -1,4 +1,4 @@
-# Agent Repay-First Payees (draft ERC)
+# ERC-8464: Agent Repay-First Payees (draft)
 
 A revenue address for an agent identity that pays its creditors before its owner. The agent uses the payee as the
 address where it is paid (an x402 `payTo`, an ERC-8183 job's provider). It cannot be set as the agent's ERC-8004
@@ -14,9 +14,8 @@ token from what its creditors leave: the token is the payee's beneficiary, never
 sends it with `syncFromPayee`, so lenders stay senior and holders come last.
 
 **Status: draft, submitted as [ethereum/ERCs#2108](https://github.com/ethereum/ERCs/pull/2108).** The text is in
-[`ERCS/erc-draft_repay_first_payees.md`](ERCS/erc-draft_repay_first_payees.md). Its `eip: 99902` is a placeholder until
-the ERC editors assign a number. Discussion: [Ethereum
-Magicians](https://ethereum-magicians.org/t/erc-tba-agent-repay-first-payees/30025).
+[`ERCS/erc-8464.md`](ERCS/erc-8464.md). The editors assigned it ERC-8464 on 2026-10-27. Discussion: [Ethereum
+Magicians](https://ethereum-magicians.org/t/erc-8464-agent-repay-first-payees/30025).
 
 ## Why
 
@@ -29,7 +28,7 @@ lenders share a revenue address in a clear order, and lets payers, explorers and
 
 | Path | What |
 |---|---|
-| `ERCS/erc-draft_repay_first_payees.md` | The ERC text, in the ethereum/ERCs template |
+| `ERCS/erc-8464.md` | The ERC text, in the ethereum/ERCs template |
 | `src/IRepayFirstPayee.sol` | The payee and creditor interfaces |
 | `src/RepayFirstPayee.sol` | A reference payee, and a factory that deploys one per agent at a CREATE2 address (not audited) |
 | `test/RepayFirstPayee.t.sol` | Foundry tests, with failing, greedy and gas-burning creditors, a lender that takes repayment only in full, and an ERC-8183 job whose provider is the payee |
