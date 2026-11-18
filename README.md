@@ -32,6 +32,7 @@ lenders share a revenue address in a clear order, and lets payers, explorers and
 | `src/IRepayFirstPayee.sol` | The payee and creditor interfaces |
 | `src/RepayFirstPayee.sol` | A reference payee, and a factory that deploys one per agent at a CREATE2 address (not audited) |
 | `test/RepayFirstPayee.t.sol` | Foundry tests, with failing, greedy and gas-burning creditors, a lender that takes repayment only in full, and an ERC-8183 job whose provider is the payee |
+| `src/AgentWalletPayee.sol` | A variant of the reference payee, with its factory, that can be declared as an ERC-8004 agent's payment wallet (`agentWallet`) without approving its owner's signatures, which Permit2 and some tokens accept for transfers: its ERC-1271 check accepts only the identity registry's `AgentWalletSet` digest for itself. Tests in `test/AgentWalletPayee.t.sol` (not audited) |
 | `src/IRepayFirstProvider.sol` | The interface of the optional "Acting as an ERC-8183 provider" section, which the reference payee implements |
 | `src/IHoldersAfterCreditors.sol` | The interface of the optional "Paying holders after creditors" section |
 | `src/HoldersAfterCreditorsToken.sol` | A reference ERC-7254 token that is a payee's beneficiary and books what it receives with `syncFromPayee` (not audited) |
